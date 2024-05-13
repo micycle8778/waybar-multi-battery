@@ -4,6 +4,9 @@ use std::process::Command;
 use std::process::Child;
 use std::process::Stdio;
 
+use notify_rust::Notification;
+use notify_rust::Urgency;
+
 // nerd font icons
 fn discharging_icon_of_percentage(percentage: f32) -> &'static str {
     match ((percentage / 10.0).floor() * 10.0) as i32 {
@@ -66,23 +69,13 @@ enum NotificationUrgencyLevel {
     Critical
 }
 
-impl NotificationUrgencyLevel {
-    fn to_param(&self) -> &'static str {
-        match *self {
-            Self::Low => "low",
-            Self::Normal => "normal",
-            Self::Critical => "critical"
-        }
-    }
-}
-
-fn send_notification(title: &str, body: &str, urgency: NotificationUrgencyLevel) {
-    Command::new("notify-send")
-        .arg("-u")
-        .arg(urgency.to_param())
-        .arg(title)
-        .arg(body)
-        .output()
+fn send_notification(title: &str, body: &str, urgency: Urgency) {
+    Notification::new()
+        .summary(title)
+        .body(body)
+        .urgency(urgency)
+        .finalize()
+        .show()
         .unwrap();
 }
 
@@ -233,7 +226,7 @@ fn send_battery_notification(
     title: &str, 
     verb: &str, 
     battery_data: &BatteryData, 
-    urgency: NotificationUrgencyLevel
+    urgency: Urgency 
 ) {
     let body = format!(
         "Battery is at {}. Will be {} in {}.",
@@ -254,28 +247,28 @@ impl BatteryState {
                     "Battery Discharging", 
                     "empty", 
                     battery_data, 
-                    NotificationUrgencyLevel::Normal
+                    Urgency::Normal
                 ),
             Self::Low => 
                 send_battery_notification(
                     "Battery Low", 
                     "empty", 
                     battery_data, 
-                    NotificationUrgencyLevel::Critical
+                    Urgency::Critical
                 ),
             Self::Critical => 
                 send_battery_notification(
                     "Battery Very Low", 
                     "empty", 
                     battery_data, 
-                    NotificationUrgencyLevel::Critical
+                    Urgency::Critical
                 ),
             Self::Charging => 
                 send_battery_notification(
                     "Battery Charging", 
                     "fully charged", 
                     battery_data, 
-                    NotificationUrgencyLevel::Normal
+                    Urgency::Normal
                 )
         }
     }
