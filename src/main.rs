@@ -1,9 +1,15 @@
+use std::error::Error;
+
+use std::io;
 use std::io::BufReader;
 use std::io::BufRead;
+
 use std::process::Command;
 use std::process::Child;
+use std::process::Output;
 use std::process::Stdio;
 
+use notify_rust;
 use notify_rust::Notification;
 use notify_rust::Urgency;
 
@@ -42,41 +48,51 @@ fn charging_icon_of_percentage(percentage: f32) -> &'static str {
     }
 }
 
-struct ChildProcess {
-    child: Child,
+struct UPowerMonitorChildProcess {
+    child: Option<Child>,
 }
 
-impl ChildProcess {
-    fn new() -> Self {
-        Self {
-            child: Command::new("upower")
+impl UPowerMonitorChildProcess {
+    fn new() -> Result<Self, Box<dyn Error>> {
+        let child = Command::new("upower")
             .arg("--monitor")
             .stdout(Stdio::piped())
-            .spawn().unwrap(),
+            .spawn();
+
+        let child = match child {
+            Ok(child) => child,
+            Err(e) => match e.kind() {
+                io::ErrorKind::NotFound => return Err("upower executable not found".into()),
+                _ => return Err(e.into())
+            }
+        };
+
+        Ok(Self {
+            child: Some(child),
+        })
+    }
+
+    fn wait(mut self) -> io::Result<Output> {
+        self.child.take().unwrap().wait_with_output()
+    }
+}
+
+impl Drop for UPowerMonitorChildProcess {
+    fn drop(&mut self) {
+        if let Some(c) = self.child.as_mut() {
+            c.kill().unwrap();
         }
     }
 }
 
-impl Drop for ChildProcess {
-    fn drop(&mut self) {
-        self.child.kill().unwrap();
-    }
-}
-
-enum NotificationUrgencyLevel {
-    Low,
-    Normal,
-    Critical
-}
-
-fn send_notification(title: &str, body: &str, urgency: Urgency) {
+fn send_notification(title: &str, body: &str, urgency: Urgency) -> notify_rust::error::Result<()> {
     Notification::new()
         .summary(title)
         .body(body)
         .urgency(urgency)
         .finalize()
-        .show()
-        .unwrap();
+        .show()?;
+    Ok(())
 }
 
 #[derive(PartialEq)]
@@ -117,40 +133,43 @@ struct BatteryData {
     discharging: bool
 }
 
+fn create_time_string(hours_left: f32) -> String {
+    let hours = hours_left.floor();
+    let minutes = ((hours_left - hours) * 60.0).floor();
+
+    let hours = hours as u32;
+    let minutes = minutes as u32;
+
+    let hour_str = (hours != 0).then(|| {
+        if hours == 1 { format!("{hours} hour") }
+        else { format!("{hours} hours") }
+    });
+
+    let conjunction = (hours != 0 && minutes != 0).then(|| " and ".to_string());
+
+    let minute_str = (minutes != 0).then(|| {
+        if minutes == 1 { format!("{minutes} minute") }
+        else { format!("{minutes} minutes") }
+    });
+
+    [hour_str, conjunction, minute_str].into_iter().filter_map(|x| x).collect()
+}
+
 impl BatteryData {
     fn create_percentage_string(&self) -> String {
         format!("{}%", self.percentage.floor() as u32)
     }
-    fn create_time_string(&self) -> Option<String> {
-        let hours_left = self.hours_left?;
-        let hours = hours_left.floor();
-        let minutes = ((hours_left - hours) * 60.0).floor();
-
-        let hours = hours as u32;
-        let minutes = minutes as u32;
-
-        let hour_str = (hours != 0).then(|| {
-            if hours == 1 { format!("{hours} hour") }
-            else { format!("{hours} hours") }
-        });
-
-        let conjunction = (hours != 0 && minutes != 0).then(|| " and ".to_string());
-
-        let minute_str = (minutes != 0).then(|| {
-            if minutes == 1 { format!("{minutes} minute") }
-            else { format!("{minutes} minutes") }
-        });
-
-        Some([hour_str, conjunction, minute_str].into_iter().filter_map(|x| x).collect())
-    }
-    fn new() -> Self {
+    fn new() -> Option<Self> {
         let enumerate_command = Command::new("upower")
                 .arg("-e")
                 .output()
                 .unwrap();
         let batteries = std::str::from_utf8(&enumerate_command.stdout).unwrap().lines()
             .filter(|s| !s.contains("hid"))
-            .filter(|s| s.contains("battery"));
+            .filter(|s| s.contains("battery"))
+            .collect::<Vec<_>>();
+
+        if batteries.is_empty() { return None; }
 
         let mut total_energy = 0.0;
         let mut total_energy_full = 0.0;
@@ -189,11 +208,11 @@ impl BatteryData {
         }
 
         if total_state == UPowerBatteryState::FullyCharged {
-            return BatteryData {
+            return Some(BatteryData {
                 percentage: 100.0,
                 hours_left: None,
                 discharging: false,
-            };
+            });
         }
         
         let percentage = (total_energy / total_energy_full) * 100.0;
@@ -203,11 +222,11 @@ impl BatteryData {
             else { (total_energy_full - total_energy) / total_energy_rate }
         );
 
-        BatteryData {
+        Some(BatteryData {
             percentage,
             discharging,
             hours_left
-        }
+        })
     }
 
     
@@ -226,20 +245,22 @@ fn send_battery_notification(
     title: &str, 
     verb: &str, 
     battery_data: &BatteryData, 
+    hours_left: f32,
     urgency: Urgency 
-) {
+) -> notify_rust::error::Result<()> {
     let body = format!(
         "Battery is at {}. Will be {} in {}.",
         battery_data.create_percentage_string(),
         verb,
-        battery_data.create_time_string().unwrap()
+        create_time_string(hours_left)
     );
 
-    send_notification(title, &body, urgency);
+    send_notification(title, &body, urgency)?;
+    Ok(())
 }
 
 impl BatteryState {
-    fn notify(&self, battery_data: &BatteryData) {
+    fn notify(&self, battery_data: &BatteryData, hours_left: f32) -> notify_rust::error::Result<()> {
         match *self {
             Self::None => unreachable!(),
             Self::Normal => 
@@ -247,6 +268,7 @@ impl BatteryState {
                     "Battery Discharging", 
                     "empty", 
                     battery_data, 
+                    hours_left,
                     Urgency::Normal
                 ),
             Self::Low => 
@@ -254,6 +276,7 @@ impl BatteryState {
                     "Battery Low", 
                     "empty", 
                     battery_data, 
+                    hours_left,
                     Urgency::Critical
                 ),
             Self::Critical => 
@@ -261,6 +284,7 @@ impl BatteryState {
                     "Battery Very Low", 
                     "empty", 
                     battery_data, 
+                    hours_left,
                     Urgency::Critical
                 ),
             Self::Charging => 
@@ -268,6 +292,7 @@ impl BatteryState {
                     "Battery Charging", 
                     "fully charged", 
                     battery_data, 
+                    hours_left,
                     Urgency::Normal
                 )
         }
@@ -296,27 +321,41 @@ impl BatteryState {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let mut battery_state = BatteryState::None;
     let mut notified = true;
 
-    for _ in BufReader::new(ChildProcess::new().child.stdout.take().unwrap()).lines() {
-        let battery_data = BatteryData::new();
+    let mut child_process = UPowerMonitorChildProcess::new()?;
+    let lines = BufReader::new(
+        child_process
+        .child.as_mut().unwrap()
+        .stdout
+        .take().unwrap()
+    ).lines();
+
+    for _ in lines {
+        let battery_data = match BatteryData::new() {
+            Some(battery_data) => battery_data,
+            None => continue
+        };
+
         if let Some(new_state) = battery_state.new_state(&battery_data) {
             battery_state = new_state;
             notified = false;
         }
 
-        if !notified && battery_data.hours_left.is_some() {
-            battery_state.notify(&battery_data);
-            notified = true;
+        if !notified {
+            if let Some(hours_left) = battery_data.hours_left {
+                battery_state.notify(&battery_data, hours_left)?;
+                notified = true;
+            }
         }
 
-        let tooltip = if let Some(s) = battery_data.create_time_string() {
+        let tooltip = if let Some(hours_left) = battery_data.hours_left {
             format!(
                 "{} ({})", 
                 battery_data.create_percentage_string(),
-                s
+                create_time_string(hours_left)
             )
         } else {
             battery_data.create_percentage_string()
@@ -333,4 +372,12 @@ fn main() {
             battery_state.to_class()
         );
     }
+
+    // what?! upower --monitor is supposed to run forever!
+   let output = child_process.wait()?;
+   if let Some(0) = output.status.code() {
+       Err("upower --montitor is supposed to run forever, but it closed successfully.".into())
+   } else {
+       Err("upower --monitor was closed.".into())
+   }
 }

@@ -14,10 +14,19 @@
   {
     packages.${system}.default = rustPlatform.buildRustPackage {
       pname = "waybar-multi-battery";
-      version = "0.2.0";
+      version = "0.2.1";
       src = ./.;
 
       cargoLock.lockFile = ./Cargo.lock;
+
+      nativeBuildInputs = with pkgs; [ pkg-config installShellFiles makeWrapper ];
+
+      postFixup = ''
+        wrapProgram $out/bin/waybar-multi-battery \
+          --set PATH ${pkgs.lib.makeBinPath (with pkgs; [
+            upower
+        ])}
+      '';
 
       meta = {
         description = "Custom battery status module for waybar that handles multiple batteries.";
@@ -25,24 +34,6 @@
         license = nixpkgs.lib.licenses.mit;
       };
     };
-    # packages.${system}.default = pkgs.stdenv.mkDerivation {
-    #   name = "waybar-multi-battery";
-    #   src = ./.;
-    #
-    #   buildInputs = with pkgs; [
-    #     rustc
-    #     cargo
-    #   ];
-    #
-    #   buildPhase = ''
-    #     cargo build --release
-    #   '';
-    #
-    #   installPhase = ''
-    #     mkdir -p $out/bin
-    #     cp $src/target/release/waybar-multi-battery $out/bin
-    #   '';
-    # };
 
     devShells.${system}.default = pkgs.mkShell {
       nativeBuildInputs = with pkgs; [
