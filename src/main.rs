@@ -106,8 +106,15 @@ enum UPowerBatteryState {
 impl UPowerBatteryState {
     fn update(self, other: Self) -> Self {
         match other {
-            Self::PendingCharge | Self::FullyCharged => self,
-            Self::Charging | Self::Discharging => other
+            Self::PendingCharge => {
+                if self == Self::FullyCharged {
+                    return Self::Discharging
+                } else {
+                    return self
+                }
+            },
+            Self::FullyCharged => return self,
+            Self::Charging | Self::Discharging => return other
         }
     }
 }
@@ -169,7 +176,10 @@ impl BatteryData {
             .filter(|s| s.contains("battery"))
             .collect::<Vec<_>>();
 
-        if batteries.is_empty() { return None; }
+        if batteries.is_empty() { 
+            eprintln!("warning: no battery found");
+            return None; 
+        }
 
         let mut total_energy = 0.0;
         let mut total_energy_full = 0.0;

@@ -14,7 +14,7 @@
   {
     packages.${system}.default = rustPlatform.buildRustPackage {
       pname = "waybar-multi-battery";
-      version = "0.2.1";
+      version = "0.2.2";
       src = ./.;
 
       cargoLock.lockFile = ./Cargo.lock;
