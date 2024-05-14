@@ -30,6 +30,8 @@ Basic waybar config:
 
 ## Building
 
+### Cargo
+
 The program has no build dependencies other than rust crates. Build using Cargo
 with:
 
@@ -39,3 +41,60 @@ cargo build --release
 
 Then make sure to point your waybar config to the binary (default binary path
 is `path/to/repo/target/release/waybar-multi-battery`).
+
+### Nix
+
+This program is packaged with a Nix flake, meaning you should be able to build
+it using Nix:
+
+```
+nix build
+```
+
+This will build the program and wrap it with the `upower` command (the program
+won't work unless you have the upower service installed though). The binary 
+will be stored in `result/bin/waybar-multi-battery` (`result` is a symlink to 
+your Nix store).
+
+You can also add this repo as an input to a flake and access it in a NixOS 
+configuration:
+
+```nix
+# flake.nix
+{
+  description = "Nixos config flake";
+
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+
+    waybar-multi-battery = {
+      url = "github:micycle8778/waybar-multi-battery";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs = { self, nixpkgs, ... }@inputs: 
+  {
+    nixosConfigurations.default = nixpkgs.lib.nixosSystem {
+        specialArgs = { inherit inputs; };
+        modules = [
+            ./path/to/configuration.nix
+        ];
+      };
+    };
+  };
+}
+```
+```nix
+# path/to/configuration.nix
+{ inputs, ... }:
+{
+    # ...
+
+    services.upower.enabled = true; # you'll want this too
+
+    environment.systemPackages = [
+        inputs.waybar-multi-battery.packages."x86_64-linux".default
+    ];
+}
+```
