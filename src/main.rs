@@ -4,10 +4,14 @@ use std::io;
 use std::io::BufReader;
 use std::io::BufRead;
 
+use std::mem::ManuallyDrop;
+
 use std::process::Command;
 use std::process::Child;
 use std::process::Output;
 use std::process::Stdio;
+
+use std::ptr;
 
 use notify_rust;
 use notify_rust::Notification;
@@ -49,7 +53,7 @@ fn charging_icon_of_percentage(percentage: f32) -> &'static str {
 }
 
 struct UPowerMonitorChildProcess {
-    child: Option<Child>,
+    child: Child,
 }
 
 impl UPowerMonitorChildProcess {
@@ -68,20 +72,27 @@ impl UPowerMonitorChildProcess {
         };
 
         Ok(Self {
-            child: Some(child),
+            child,
         })
     }
 
-    fn wait(mut self) -> io::Result<Output> {
-        self.child.take().unwrap().wait_with_output()
+    fn wait(self) -> io::Result<Output> {
+        // it's ok to not drop here because we're going to clean up our child
+        // process
+        let child_container = ManuallyDrop::new(self);
+
+        unsafe {
+            // grabbing the child outside of unsafe will cause the borrow
+            // checker to complain
+            let child = ptr::read(&child_container.child);
+            return child.wait_with_output();
+        }
     }
 }
 
 impl Drop for UPowerMonitorChildProcess {
     fn drop(&mut self) {
-        if let Some(c) = self.child.as_mut() {
-            c.kill().unwrap();
-        }
+        self.child.kill().unwrap()
     }
 }
 
@@ -338,7 +349,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut child_process = UPowerMonitorChildProcess::new()?;
     let lines = BufReader::new(
         child_process
-        .child.as_mut().unwrap()
+        .child
         .stdout
         .take().unwrap()
     ).lines();
