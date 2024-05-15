@@ -16,7 +16,11 @@ This module outputs in JSON format and uses four CSS classes:
 
 This module currently offers no configuration. The text output is always an 
 icon from NerdFonts and the tooltip is always a percentage (and estimated time 
-left if available).
+left if available). 
+
+Notifications are sent between state changes once the program can estimate the
+time until empty/full. These notifications are sent with app name
+`waybar-multi-battery`.
 
 Basic waybar config:
 

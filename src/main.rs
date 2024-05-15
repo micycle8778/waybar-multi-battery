@@ -101,7 +101,7 @@ fn send_notification(title: &str, body: &str, urgency: Urgency) -> notify_rust::
         .summary(title)
         .body(body)
         .urgency(urgency)
-        .finalize()
+        .appname("waybar-multi-battery")
         .show()?;
     Ok(())
 }
